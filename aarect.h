@@ -111,7 +111,7 @@ public:
     __device__ virtual bool hit(const ray& r, float t_min, float t_max, hit_record& rec, curandState* rng = nullptr) const override;
 
     __device__ virtual bool bounding_box(float time0, float time1, aabb& output_box) const override {
-        output_box = aabb(point3(k - 1e-4, y0, z0), point3(k + 1e-4, y1, z1));
+        output_box = aabb(point3(k - 1e-4f, y0, z0), point3(k + 1e-4f, y1, z1));
         return true;
     }
 

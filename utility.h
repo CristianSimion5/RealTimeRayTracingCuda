@@ -8,6 +8,7 @@
 #include <memory>
 #include <random>
 #include <cstdio>
+#include <iostream>
 
 #include "glm/gtc/constants.hpp"
 #include "glm/trigonometric.hpp"
