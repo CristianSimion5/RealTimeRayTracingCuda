@@ -53,6 +53,59 @@ __device__ glm::vec3 get_color(const ray& r, const color& background, hittable_l
     return cur_emitted; // Max depth reached
 }
 
+__device__ glm::vec3 get_first_bounce_data(const ray& r, const color& background, hittable_list** world, int depth,
+    glm::vec3& normal, point3& position, curandState* local_rand_state) {
+    hit_record rec;
+    ray cur_ray = r;
+    color cur_attenuation(1.0f);
+    color cur_emitted(0.0f);
+
+    if ((*world)->hit(cur_ray, 0.001f, infinity, rec, local_rand_state)) {
+        // First bounce special case, also save normal and position at hit point
+        normal = rec.normal;
+        position = rec.p;
+
+        ray scattered;
+        color attenuation;
+        color emitted = rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
+        cur_emitted += emitted * cur_attenuation;
+        if (rec.mat_ptr->scatter(cur_ray, rec, attenuation, scattered, local_rand_state)) {
+            cur_ray = scattered;
+            cur_attenuation *= attenuation;
+        }
+        else {
+            return cur_emitted;
+        }
+    }
+    else {
+        // No bounce special case, normals and position is undefined
+        normal = glm::vec3(0.5f);// glm::vec3(0, 0, 1);//glm::vec3(0.0f); // can also use normalized value like (0, 0, 1) if we get an error
+        position = cur_ray.at(10000.0f);//point3(0.0f);  // If it doesn't work also try ray.at(large_value);
+
+        return cur_emitted + cur_attenuation * background;
+    }
+
+    for (int i = 1; i < depth; i++) {
+        if ((*world)->hit(cur_ray, 0.001f, infinity, rec, local_rand_state)) {
+            ray scattered;
+            color attenuation;
+            color emitted = rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
+            cur_emitted += emitted * cur_attenuation;
+            if (rec.mat_ptr->scatter(cur_ray, rec, attenuation, scattered, local_rand_state)) {
+                cur_ray = scattered;
+                cur_attenuation *= attenuation;
+            }
+            else {
+                return cur_emitted;
+            }
+        }
+        else {
+            return cur_emitted + cur_attenuation * background;
+        }
+    }
+    return cur_emitted; // Max depth reached
+}
+
 __global__ void rand_init(curandState* rand_state) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         curand_init(1984, 0, 0, rand_state);
@@ -247,7 +300,8 @@ __global__ void render_init(int max_x, int max_y, curandState* rand_state) {
     curand_init(1984 + pixel_index, 0, 0, &rand_state[pixel_index]);
 }
 
-__global__ void render(color* fb, color* pbo_buf, int max_x, int max_y, int spp, int max_depth,
+__global__ void render(color* fb, color* pbo_buf, glm::vec3* normals, point3* positions, 
+    int max_x, int max_y, int spp, int max_depth,
     camera** cam, color bgcolor, hittable_list** world, curandState* rand_state,
     int frame_count) {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -259,9 +313,16 @@ __global__ void render(color* fb, color* pbo_buf, int max_x, int max_y, int spp,
     curandState& local_rand_state = rand_state[pixel_index];
     color col(0.0f);
 
-    for (int s = 0; s < spp; s++) {
-        float u = float(i + curand_uniform(&local_rand_state)) / max_x;
-        float v = float(j + curand_uniform(&local_rand_state)) / max_y;
+    // First sample
+    float u = float(i + curand_uniform(&local_rand_state)) / max_x;
+    float v = float(j + curand_uniform(&local_rand_state)) / max_y;
+    ray r = (*cam)->get_ray(u, v, &local_rand_state);
+    col += get_first_bounce_data(r, bgcolor, world, max_depth, 
+        normals[pixel_index], positions[pixel_index], &local_rand_state);
+
+    for (int s = 1; s < spp; s++) {
+        u = float(i + curand_uniform(&local_rand_state)) / max_x;
+        v = float(j + curand_uniform(&local_rand_state)) / max_y;
         ray r = (*cam)->get_ray(u, v, &local_rand_state);
         col += get_color(r, bgcolor, world, max_depth, &local_rand_state);
     }
@@ -273,6 +334,54 @@ __global__ void render(color* fb, color* pbo_buf, int max_x, int max_y, int spp,
     }
 
     pbo_buf[pixel_index] = glm::sqrt(fb[pixel_index] / (float(spp) * frame_count));
+    //pbo_buf[pixel_index] = normals[pixel_index] / 2.f + 0.5f;
+}
+
+__global__ void denoise(color* src, glm::vec3* normals, point3* positions,
+    float c_phi, float n_phi, float p_phi,
+    glm::ivec2* offset, float* kernel, int stepwidth,
+    color* temp_buf, int max_x, int max_y) {
+ 
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if ((i >= max_x) || (j >= max_y)) return;
+
+    // i - coloana (directia pe x), j - linia (directia pe y) 
+    int pixel_index = j * max_x + i;
+    color col = src[pixel_index], new_col;
+    glm::vec3 nrm = normals[pixel_index], new_nrm;
+    glm::vec3 pos = positions[pixel_index], new_pos;
+
+    glm::vec3 s(0.0f);
+    float k = 0.0f;
+    float dst, c_w, n_w, p_w, w;
+    
+    for (int ind = 0; ind < 25; ind++) {
+        auto q = glm::ivec2(i, j) + offset[ind] * stepwidth;
+        if (q.x < 0 || q.x >= max_x || q.y < 0 || q.y >= max_y)
+            continue;
+
+        int new_index = q.y * max_x + q.x;
+        new_col = src[new_index];
+        new_nrm = normals[new_index];
+        new_pos = positions[new_index];
+
+        dst = glm::distance(col, new_col);
+        c_w = glm::min(glm::exp(-dst / c_phi), 1.0f);
+
+        dst = glm::distance(nrm, new_nrm);
+        n_w = glm::min(glm::exp(-dst / n_phi), 1.0f);
+
+        dst = glm::distance(pos, new_pos);
+        p_w = glm::min(glm::exp(-dst / p_phi), 1.0f);
+
+        w = c_w * n_w * p_w;
+        s += kernel[ind] * w * new_col;
+        k += kernel[ind] * w;
+    }
+
+    temp_buf[pixel_index] = s / k;
 }
 
 __global__ void free_world(hittable** d_list, int objects_size, hittable_list** d_world) {

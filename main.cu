@@ -27,6 +27,17 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, GLFW_TRUE);
 
+    if (key == GLFW_KEY_EQUAL && action == GLFW_PRESS) {
+        gl_ptr->scene.denoise_passes++;
+        std::cout << "Increased denoising passes to " << gl_ptr->scene.denoise_passes << '\n';
+    }
+
+    if (key == GLFW_KEY_MINUS && action == GLFW_PRESS) {
+        gl_ptr->scene.denoise_passes--;
+        gl_ptr->scene.denoise_passes = glm::max(gl_ptr->scene.denoise_passes, 0);
+        std::cout << "Decreased denoising passes to " << gl_ptr->scene.denoise_passes << '\n';
+    }
+
     if (key == GLFW_KEY_LEFT && action == GLFW_REPEAT) {
         gl_ptr->scene.move_camera(glm::vec3(10, 0, 0));
     }
@@ -49,7 +60,7 @@ void resize_callback(GLFWwindow*, int width, int height) {
 }
 
 int main(int argc, char* argv[]) {
-    scene_settings scene(800, 600, 1, 8, color(0.0f), 8, 2);
+    scene_settings scene(600, 500, 1, 8, color(0.0f), 8, 2);
 
     if (!glfwInit()) {
         std::cerr << "Error: GLFW could not be initialized...";
@@ -74,11 +85,8 @@ int main(int argc, char* argv[]) {
     }
 
     gl_wrapper opengl_wrap(scene,
-        "../../vertex_shader.vert", "../../fragment_shader.frag");
+        "vertex_shader.vert", "fragment_shader.frag");
     gl_ptr = &opengl_wrap;
-    //cudaGraphicsResource* cuda_resource_tex;
-
-    //checkCudaErrors(cudaGraphicsGLRegisterImage(&cuda_resource_tex, tex_obj, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsNone));
     
     glfwSetFramebufferSizeCallback(window, resize_callback);
     glfwSetKeyCallback(window, key_callback);

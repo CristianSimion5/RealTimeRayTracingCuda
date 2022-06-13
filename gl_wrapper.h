@@ -38,6 +38,8 @@ public:
 
         fb_size = (size_t) scene_settings::MAX_PIXELS * sizeof(color);
         checkCudaErrors(cudaMallocManaged((void**) &fb, fb_size));
+        checkCudaErrors(cudaMallocManaged(&normals, fb_size));
+        checkCudaErrors(cudaMallocManaged(&positions, fb_size));
 
         GLfloat vertices[] = {
            -1.f, -1.f, 0.f, 0.f, 0.f,      // format: x, y, z, u, v
@@ -96,8 +98,11 @@ public:
     ~gl_wrapper() {
         // Raises CUDA error, probably cudaDeviceReset already unregisters the resource (or some other destructive call)
         //checkCudaErrors(cudaGraphicsUnregisterResource(cuda_resource_pbo));
+        
+        checkCudaErrors(cudaFree(positions));
+        checkCudaErrors(cudaFree(normals));
         checkCudaErrors(cudaFree(fb));
-    
+
         glDeleteBuffers(1, &pbo);
         glDeleteBuffers(1, &ibo);
         glDeleteBuffers(1, &vbo);
@@ -117,7 +122,7 @@ public:
             std::cout << "Size mismatch: " << fb_size << ' ' << pbo_buffer_size << '\n';
         }
 
-        scene.generate_frame(fb, pbo_buffer);
+        scene.generate_frame(fb, normals, positions, pbo_buffer);
     
         // Wait for the frame to render, probably unnecessary since UnmapResources also synchronizes
         // checkCudaErrors(cudaGetLastError());
@@ -178,5 +183,8 @@ private:
 
     color* fb;
     size_t fb_size;
+
+    glm::vec3* normals;
+    point3* positions;
 };
 
