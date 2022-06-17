@@ -68,40 +68,6 @@ public:
     float scale;
 };
 
-/*
-class image {
-public:
-    const static int bytes_per_pixel = 3;
-    
-    __host__ image() : d_data(nullptr), width(0), height(0), bytes_per_scanline(0) {}
-
-    __host__ image(const char* filename) {
-        auto components_per_pixel = bytes_per_pixel;
-
-        auto h_data = stbi_load(
-            filename, &width, &height, &components_per_pixel, components_per_pixel);
-
-        if (!h_data) {
-            //std::cerr << "ERROR: Could not load texture image file: \"" << filename << "\".\n";
-            printf("ERROR: Could not load texture image file: \"%s\".\n", filename);
-            width = height = 0;
-        }
-        else {
-            assert(cudaMallocManaged(&d_data, width * height * components_per_pixel * sizeof(unsigned char)) == cudaSuccess);
-            memcpy(d_data, h_data, width * height * components_per_pixel * sizeof(unsigned char));
-        }
-
-        bytes_per_scanline = bytes_per_pixel * width;
-        stbi_image_free(h_data);
-    }
-
-public:
-    unsigned char* d_data;  // Image data is stored only on device (GPU)
-    int width, height;
-    int bytes_per_scanline;
-};
-*/
-
 struct image_params {
     int width, height;
     int bytes_per_scanline;
@@ -142,39 +108,6 @@ public:
 
     __device__ image_texture(unsigned char* image_data, image_params image_info) : d_data(image_data), 
         width(image_info.width), height(image_info.height), bytes_per_scanline(image_info.bytes_per_scanline) {}
-    
-    //__device__ image_texture(const image& img) : image_texture(img.d_data, img.width, img.height, img.bytes_per_scanline) {}
-
-    /*
-    __host__ image_texture(const image_texture& other) {
-        printf("Called image texture copy constructor\n");
-        
-        width = other.width;
-        height = other.height;
-        bytes_per_scanline = other.bytes_per_scanline;
-
-        assert(cudaMalloc(&d_data, width * height * bytes_per_pixel * sizeof(unsigned char)) == cudaSuccess);
-        assert(cudaMemcpy(d_data, other.d_data,
-            width * height * bytes_per_pixel * sizeof(unsigned char), cudaMemcpyDeviceToDevice) == cudaSuccess);
-    }
-
-    __host__ image_texture& operator=(const image_texture& other) {
-        if (this != &other) {
-            printf("Called image texture assignment\n");
-            if (d_data)
-                cudaFree(d_data);
-
-            width = other.width;
-            height = other.height;
-            bytes_per_scanline = other.bytes_per_scanline;
-
-            assert(cudaMalloc(&d_data, width * height * bytes_per_pixel * sizeof(unsigned char)) == cudaSuccess);
-            assert(cudaMemcpy(d_data, other.d_data,
-                width * height * bytes_per_pixel * sizeof(unsigned char), cudaMemcpyDeviceToDevice) == cudaSuccess);
-        }
-        return *this;
-    }
-    */
 
     __device__ virtual color value(float u, float v, const point3& p) const override {
         if (d_data == nullptr)

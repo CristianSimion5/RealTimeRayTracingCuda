@@ -60,7 +60,7 @@ void resize_callback(GLFWwindow*, int width, int height) {
 }
 
 int main(int argc, char* argv[]) {
-    scene_settings scene(600, 500, 1, 8, color(0.0f), 8, 2);
+    scene_settings scene(600, 500, 1, 2, color(0.0f), 8, 2, 1);
 
     if (!glfwInit()) {
         std::cerr << "Error: GLFW could not be initialized...";

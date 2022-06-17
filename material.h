@@ -5,17 +5,35 @@
 #include "utility.h"
 #include "hittable.h"
 #include "texture.h"
+#include "onb.h"
+#include "pdf.h"
+
+struct scatter_record {
+    ray specular_ray;
+    bool is_specular;
+    color attenuation;
+    cosine_pdf pdf_obj;
+};
 
 class material {
 public:
     __device__ virtual ~material() {}
     
     __device__ virtual bool scatter(
-        const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered, 
+        const ray& r_in, const hit_record& rec, scatter_record& srec, 
         curandState* rand_state
-    ) const = 0;
+    ) const {
+        return false;
+    };
 
-    __device__ virtual color emitted(float u, float v, const point3& p) const {
+    __device__ virtual float scattering_pdf(
+        const ray& r_in, const hit_record& rec, const ray& scattered
+    ) const {
+        return 0.0f;
+    }
+
+    __device__ virtual color emitted(const ray &r_in, const hit_record& rec, 
+        float u, float v, const point3& p) const {
         return color(0.0f);
     }
 };
@@ -25,26 +43,51 @@ class lambertian : public material {
 public:
     __device__ lambertian(const color& a) : albedo(new solid_color(a)) {}
     __device__ lambertian(_texture* a) : albedo(a) {}
-    __device__ virtual ~lambertian() { delete albedo; }
+    __device__ virtual ~lambertian() { 
+        if (albedo) {
+            delete albedo; 
+            albedo = nullptr;
+        }
+    }
 
     __device__ virtual bool scatter(
-        const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered, 
+        const ray& r_in, const hit_record& rec, scatter_record& srec,
         curandState* rand_state
     ) const override {
-        // TODO: use random in hemisphere
-        auto scatter_direction = rec.normal + random_unit_vector(rand_state);
+        // auto scatter_direction = rec.normal + random_unit_vector(rand_state);
+        // auto scatter_direction = random_in_hemisphere(rec.normal, rand_state);
+        
+        srec.is_specular = false;
+        srec.attenuation = albedo->value(rec.u, rec.v, rec.p);
+        srec.pdf_obj = cosine_pdf(rec.normal);
+
+        /*onb uvw;
+        uvw.build_from_norm(rec.normal);
+        auto scatter_direction = uvw.local(random_cosine_direction(rand_state));
 
         // Degenerate direction
         if (near_zero(scatter_direction))
         {
-            /*std::cerr << scatter_direction.x << ' ' << scatter_direction.y <<
-                ' ' << scatter_direction.z << '\n';*/
+            std::cerr << scatter_direction.x << ' ' << scatter_direction.y <<
+                ' ' << scatter_direction.z << '\n';
             scatter_direction = rec.normal;
         }
 
-        scattered = ray(rec.p, scatter_direction, r_in.time());
-        attenuation = albedo->value(rec.u, rec.v,  rec.p);
+        scattered = ray(rec.p, glm::normalize(scatter_direction), r_in.time());
+        alb = albedo->value(rec.u, rec.v, rec.p);
+        // pdf = glm::dot(rec.normal, scattered.direction()) / pi;
+        // pdf = 0.5f / pi;
+        pdf = glm::dot(uvw.w(), scattered.direction()) / pi;
+        */
+
         return true;
+    }
+
+    __device__ float scattering_pdf(
+        const ray& r_in, const hit_record& rec, const ray& scattered
+    ) const {
+        auto cosine = glm::dot(rec.normal, glm::normalize(scattered.direction()));
+        return cosine < 0 ? 0.0f : cosine / pi;
     }
 
 public:
@@ -56,13 +99,16 @@ public:
     __device__ metal(const color& a, float f) : albedo(a), fuzz(f < 1 ? f : 1) {}
 
     __device__ virtual bool scatter(
-        const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered, 
+        const ray& r_in, const hit_record& rec, scatter_record& srec,
         curandState* rand_state
     ) const override {
         glm::vec3 reflected = glm::reflect(glm::normalize(r_in.direction()), rec.normal);
-        scattered = ray(rec.p, reflected + fuzz * random_in_unit_sphere(rand_state), r_in.time());
-        attenuation = albedo;
-        return (glm::dot(scattered.direction(), rec.normal) > 0);
+        srec.specular_ray = ray(rec.p, reflected + fuzz * random_in_unit_sphere(rand_state), r_in.time());
+        srec.attenuation = albedo;
+        srec.is_specular = true;
+        //srec.pdf_ptr = nullptr;
+        //return (glm::dot(scattered.direction(), rec.normal) > 0);
+        return true;
     }
 
 public:
@@ -75,10 +121,12 @@ public:
     __device__ dielectric(float index_of_refraction) : ir(index_of_refraction) {}
 
     __device__ virtual bool scatter(
-        const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered,
+        const ray& r_in, const hit_record& rec, scatter_record& srec,
         curandState* rand_state
     ) const override {
-        attenuation = color(1.0f);
+        srec.is_specular = true;
+        //srec.pdf_ptr = nullptr;
+        srec.attenuation = color(1.0f);
         float refraction_ratio = rec.front_face ? (1.f / ir) : ir;
 
         glm::vec3 unit_direction = glm::normalize(r_in.direction());
@@ -93,7 +141,7 @@ public:
         else
             direction = glm::refract(unit_direction, rec.normal, refraction_ratio);
 
-        scattered = ray(rec.p, direction, r_in.time());
+        srec.specular_ray = ray(rec.p, direction, r_in.time());
         return true;
     }
 
@@ -121,13 +169,14 @@ public:
     }
 
     __device__ virtual bool scatter(
-        const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered,
+        const ray& r_in, const hit_record& rec, scatter_record& srec,
         curandState* rand_state
     ) const override {
         return false;
     }
 
-    __device__ virtual color emitted(float u, float v, const point3& p) const override {
+    __device__ virtual color emitted(const ray& r_in, const hit_record& rec,
+        float u, float v, const point3& p) const override {
         return emit->value(u, v, p);
     }
 
@@ -147,11 +196,11 @@ public:
     }
 
     __device__ virtual bool scatter(
-        const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered,
+        const ray& r_in, const hit_record& rec, scatter_record& srec,
         curandState* rand_state
     ) const override {
-        scattered = ray(rec.p, random_in_unit_sphere(rand_state), r_in.time());
-        attenuation = albedo->value(rec.u, rec.v, rec.p);
+        //scattered = ray(rec.p, random_in_unit_sphere(rand_state), r_in.time());
+        srec.attenuation = albedo->value(rec.u, rec.v, rec.p);
         return true;
     };
 

@@ -58,6 +58,32 @@ __device__ glm::vec3 random_in_hemisphere(const glm::vec3& normal, curandState* 
     return -in_unit_sphere;
 }
 
+__device__ glm::vec3 random_cosine_direction(curandState* rand_state) {
+    auto r1 = random_float(rand_state);
+    auto r2 = random_float(rand_state);
+    auto z = glm::sqrt(1 - r2);
+
+    auto phi = 2 * pi * r1;
+    auto r2_sqrt = glm::sqrt(r2);
+    auto x = glm::cos(phi) * r2_sqrt;
+    auto y = glm::sin(phi) * r2_sqrt;
+
+    return glm::vec3(x, y, z);
+}
+
+__device__ glm::vec3 random_to_sphere(float radius, float dist_sq, curandState* rand_state) {
+    auto r1 = random_float(rand_state);
+    auto r2 = random_float(rand_state);
+    auto z = 1.0f + r2 * (glm::sqrt(1.0f - radius * radius / (dist_sq + 1e-4)) - 1.0f);
+
+    auto phi = 2.0f * pi * r1;
+    auto z_int = glm::sqrt(1.0f - z * z);
+    auto x = glm::cos(phi) * z_int;
+    auto y = glm::sin(phi) * z_int;
+
+    return glm::vec3(x, y, z);
+}
+
 std::ostream& operator<<(std::ostream& out, const glm::vec3& vec) {
     out << '(' << vec.x << ' ' << vec.y << ' ' << vec.z  << ')';
     return out;

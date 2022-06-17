@@ -27,6 +27,14 @@ public:
 
     __device__ virtual bool hit(const ray& r, float t_min, float t_max, hit_record& rec, curandState* rng = nullptr) const = 0;
     __device__ virtual bool bounding_box(float time0, float time1, aabb& output_box) const = 0;
+    __device__ virtual float pdf_value(const point3& o, const glm::vec3& dir) const {
+        return 0.0f;
+    }
+    __device__ virtual glm::vec3 random_surface_point(const point3& o, curandState* rand, color& emittance) const {
+        // Default implementation to not implement the function in all hittables
+        emittance = color(0.0f);
+        return glm::vec3(0.0f);
+    };
 };
 
 class translate : public hittable {
@@ -156,3 +164,23 @@ __device__ bool rotate_y::hit(const ray& r, float t_min, float t_max, hit_record
 
     return true;
 }
+
+class flip_face : public hittable {
+public:
+    __device__ flip_face(hittable* p) : ptr(p) {}
+
+    __device__ virtual bool hit(const ray& r, float t_min, float t_max, hit_record& rec, curandState* rng = nullptr) const override {
+        if (!ptr->hit(r, t_min, t_max, rec))
+            return false;
+
+        rec.front_face = !rec.front_face;
+        return true;
+    }
+
+    __device__ virtual bool bounding_box(float time0, float time1, aabb& output_box) const override {
+        return ptr->bounding_box(time0, time1, output_box);
+    }
+
+public:
+    hittable* ptr;
+};

@@ -2,6 +2,8 @@
 
 #include "hittable.h"
 #include "vector3.h"
+#include "onb.h"
+#include "material.h"
 
 // NOTE: any material sent to the hittable should be managed from the hittable from then on
 class sphere: public hittable {
@@ -20,6 +22,9 @@ public:
         const ray& r, float t_min, float t_max, hit_record& rec, curandState* rng = nullptr) const override;
 
     __device__ virtual bool bounding_box(float time0, float time1, aabb& output_box) const override;
+
+    __device__ virtual float pdf_value(const point3& o, const glm::vec3& dir) const override;
+    __device__ virtual glm::vec3 random_surface_point(const point3& o, curandState* rand, color& emittance) const override;
 
 public:
     point3 center;
@@ -64,10 +69,36 @@ __device__ bool sphere::hit(const ray& r, float t_min, float t_max, hit_record& 
     return true;
 }
 
-bool sphere::bounding_box(float time0, float time1, aabb& output_box) const {
+__device__ bool sphere::bounding_box(float time0, float time1, aabb& output_box) const {
     output_box = aabb(
         center - glm::vec3(radius),
         center + glm::vec3(radius)
     );
     return true;
+}
+
+__device__ float sphere::pdf_value(const point3& o, const glm::vec3& dir) const {
+    hit_record rec;
+    if (!hit(ray(o, dir), 0.001f, infinity, rec))
+        return 0.0f;
+
+    auto cos_theta_max = glm::sqrt(1.0f - radius * radius / glm::distance2(center, o));
+    auto solid_angle = 2.0f * pi * (1.0f - cos_theta_max);
+
+    return 1.0f / solid_angle;
+}
+
+__device__ glm::vec3 sphere::random_surface_point(const point3& o, curandState* rand, color& emittance) const {
+    // auto normal = random_unit_vector(rand);
+    // get_sphere_uv(normal, u, v);
+    // return  normal * radius + center;
+
+    // Dummy variables since we don't have complex emissions yet
+    emittance = mat_ptr->emitted(ray(), hit_record(), 0.0f, 0.0f, point3(0.0f));
+
+    glm::vec3 direction = center - o;
+    auto dist_sq = glm::length2(direction);
+    onb uvw;
+    uvw.build_from_norm(direction);
+    return uvw.local(random_to_sphere(radius, dist_sq, rand));
 }

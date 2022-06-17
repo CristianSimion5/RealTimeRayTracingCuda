@@ -3,6 +3,7 @@
 #include "utility.h"
 
 #include "hittable.h"
+#include "material.h"
 
 class xy_rect : public hittable {
 public:
@@ -29,6 +30,9 @@ public:
 };
 
 __device__ bool xy_rect::hit(const ray& r, float t_min, float t_max, hit_record& rec, curandState* rng) const {
+    if (glm::abs(r.direction().z) < 1e-4f)
+        return false;
+
     auto t = (k - r.origin().z) / r.direction().z;
     if (t < t_min || t_max < t)
         return false;
@@ -69,12 +73,18 @@ public:
         return true;
     }
 
+    __device__ virtual float pdf_value(const point3& origin, const glm::vec3& dir) const override;
+    __device__ virtual glm::vec3 random_surface_point(const point3& o, curandState* rand, color& emittance) const override;
+
 public:
     material* mp;
     float x0, x1, z0, z1, k;
 };
 
 __device__ bool xz_rect::hit(const ray& r, float t_min, float t_max, hit_record& rec, curandState* rng) const {
+    if (glm::abs(r.direction().y) < 1e-4f)
+        return false;
+
     auto t = (k - r.origin().y) / r.direction().y;
     if (t < t_min || t_max < t)
         return false;
@@ -94,6 +104,29 @@ __device__ bool xz_rect::hit(const ray& r, float t_min, float t_max, hit_record&
     rec.p = r.at(t);
 
     return true;
+}
+
+inline __device__ float xz_rect::pdf_value(const point3& origin, const glm::vec3& dir) const {
+    hit_record rec;
+    if (!hit(ray(origin, dir), 0.001f, infinity, rec))
+        return 0.0f;
+
+    auto area = (x1 - x0) * (z1 - z0);
+    auto dist2 = rec.t * rec.t * glm::length2(dir);
+    auto cosine = glm::abs(glm::dot(dir, rec.normal) / glm::length(dir));
+
+    return dist2 / (cosine * area + 1e-4f);
+}
+
+__device__ glm::vec3 xz_rect::random_surface_point(const point3& o, curandState* rand, color& emittance) const {
+    float u = random_float(rand);
+    float v = random_float(rand);
+    point3 p(u * (x1 - x0) + x0, k, v * (z1 - z0) + z0);
+    hit_record temp_rec;
+    temp_rec.front_face = false;
+    emittance = mp->emitted(ray(), temp_rec, u, v, p);
+
+    return p - o;
 }
 
 class yz_rect : public hittable {
@@ -121,6 +154,9 @@ public:
 };
 
 __device__ bool yz_rect::hit(const ray& r, float t_min, float t_max, hit_record& rec, curandState* rng) const {
+    if (glm::abs(r.direction().x) < 1e-4f)
+        return false;
+
     auto t = (k - r.origin().x) / r.direction().x;
     if (t < t_min || t_max < t)
         return false;

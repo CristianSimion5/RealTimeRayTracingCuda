@@ -15,7 +15,7 @@ public:
     static const int MAX_PIXELS = MAX_WIDTH * MAX_HEIGHT;
 
     scene_settings(int nx, int ny, int spp, int max_depth, color bgcolor, 
-        int num_objects, int num_textures)
+        int num_objects, int num_textures, int num_lights)
         : width(nx), height(ny), spp(spp), max_bounces(max_depth), bgcolor(bgcolor), 
         num_objects(num_objects), num_textures(num_textures) {
         float aspect_ratio = 1.0f * width / height;
@@ -34,11 +34,12 @@ public:
 
         checkCudaErrors(cudaMalloc((void**)&d_list, num_objects * sizeof(hittable*)));
         checkCudaErrors(cudaMalloc((void**)&d_world, sizeof(hittable_list*)));
+        checkCudaErrors(cudaMalloc((void**)&d_lights, sizeof(hittable_list*)));
         
         checkCudaErrors(cudaMallocManaged((void**)&d_camera, sizeof(camera*)));
         checkCudaErrors(cudaMallocManaged(d_camera, sizeof(camera)));
 
-        create_world << <1, 1 >> > (d_list, num_objects, d_world, d_camera, 
+        create_world << <1, 1 >> > (d_list, num_objects, d_world, d_lights, num_lights, d_camera,
             image_textures, image_info, aspect_ratio, d_rand_state_world_gen);
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaDeviceSynchronize());
@@ -68,7 +69,7 @@ public:
 
     ~scene_settings() {
         checkCudaErrors(cudaDeviceSynchronize());
-        free_world << <1, 1 >> > (d_list, num_objects, d_world);
+        free_world << <1, 1 >> > (d_list, num_objects, d_world, d_lights);
         checkCudaErrors(cudaGetLastError());
         checkCudaErrors(cudaFree(temp_buf));
         checkCudaErrors(cudaFree(offset));
@@ -77,6 +78,7 @@ public:
         checkCudaErrors(cudaFree(image_textures));
         checkCudaErrors(cudaFree(d_camera));
         checkCudaErrors(cudaFree(d_world));
+        checkCudaErrors(cudaFree(d_lights));
         checkCudaErrors(cudaFree(d_list));
         cudaDeviceReset();
     }
@@ -84,7 +86,7 @@ public:
     void generate_frame(color* fb, glm::vec3* normals, point3* positions, color* pbo_buffer) {
         dim3 blocks = dim3(width / threads.x + 1, height / threads.y + 1);
         render<<<blocks, threads>>>(fb, pbo_buffer, normals, positions, width, height, spp, max_bounces,
-            d_camera, bgcolor, d_world, d_rand_state, continuous_frame_count);
+            d_camera, bgcolor, d_world, d_lights, d_rand_state, continuous_frame_count);
 
         continuous_frame_count++;
 
@@ -155,7 +157,7 @@ public:
 public:
     int width, height, spp, max_bounces;
     color bgcolor;
-    int num_objects, num_textures;
+    int num_objects, num_textures, num_lights;
     const dim3 threads = dim3(16, 16);
 
     unsigned char** image_textures;
@@ -166,6 +168,7 @@ public:
 
     hittable** d_list;
     hittable_list** d_world;
+    hittable_list** d_lights;
     camera** d_camera;
     int continuous_frame_count;
 

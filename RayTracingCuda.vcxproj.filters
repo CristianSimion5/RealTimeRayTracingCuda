@@ -87,6 +87,12 @@
     <ClInclude Include="gl_wrapper.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="onb.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pdf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="main.cu">
@@ -96,5 +102,10 @@
   <ItemGroup>
     <None Include="vertex_shader.vert" />
     <None Include="fragment_shader.frag" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="onb.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
