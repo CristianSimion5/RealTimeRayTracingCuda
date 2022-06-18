@@ -31,6 +31,7 @@ __device__ glm::vec3 get_color(const ray& r, const color& background, hittable_l
     curandState* local_rand_state) {
     hit_record rec;
     scatter_record srec;
+    srec.is_specular = false;
     ray cur_ray = r;
     color cur_albedo(1.0f);
     color cur_emitted(0.0f);
@@ -47,31 +48,10 @@ __device__ glm::vec3 get_color(const ray& r, const color& background, hittable_l
                 printf("%f %f %f || %f %f %f || %f\n", cur_ray.origin().x, cur_ray.origin().y, cur_ray.origin().z,
                     cur_ray.direction().x, cur_ray.direction().y, cur_ray.direction().z, rec.t);
             }
-            if (i == 0) {
+            if (i == 0 || srec.is_specular) {
                 emitted = rec.mat_ptr->emitted(r, rec, rec.u, rec.v, rec.p);
                 cur_emitted += emitted * cur_albedo;
             }
-
-            // Spawn shadow ray
-            /*for (int j = 0; j < (*lights)->objects_size; j++) {
-                float u, v;
-                point3 light_pos = (*lights)->objects[j]->random_surface_point(local_rand_state, u, v);
-                auto dif = light_pos - rec.p;
-                float t_length = glm::length(dif);
-                auto shadow_ray_dir = glm::normalize(dif);
-                
-                if (glm::dot(shadow_ray_dir, rec.normal) < 0) // Testing if light position is facing away from the hit surface
-                    continue;
-
-                ray shadow_ray(rec.p, shadow_ray_dir, cur_ray.time());
-
-                if ((*world)->any_hit(shadow_ray, 0.001f, t_length - 0.01f, local_rand_state)) // Test for any intersection between point hit and light source
-                    continue;
-
-                // If we made it this far it means surface receives direct lighting from the current light source
-                direct_lighting += (*lights)->objects[j]->get_material()->emitted(u, v, light_pos);
-            }
-            */
 
             if (rec.mat_ptr->scatter(cur_ray, rec, srec, local_rand_state)) {
                 if (srec.is_specular) {
@@ -79,10 +59,6 @@ __device__ glm::vec3 get_color(const ray& r, const color& background, hittable_l
                     cur_ray = srec.specular_ray;
                     continue;
                 }
-
-                // cosine_pdf p0(rec.normal);
-                // scattered = ray(rec.p, p.generate(local_rand_state), cur_ray.time());
-                // pdf_val = p.value(scattered.direction());
 
                 // Sample direct light
                 hittable_pdf light_pdf((*lights), rec.p);
@@ -95,32 +71,33 @@ __device__ glm::vec3 get_color(const ray& r, const color& background, hittable_l
                 float visibility = 1.0f;
                 if (glm::dot(shadow_ray.direction(), rec.normal) < 0.0f) // Testing if light position is facing away from the hit surface
                     visibility = 0.0f;
-                
+
                 if ((*world)->any_hit(shadow_ray, 0.001f, glm::length(dif) - 0.01f, local_rand_state)) // Test for any intersection between point hit and light source
                     visibility = 0.0f;
-                
+
                 float direct_light = 0.0f;
                 if (glm::abs(pdf_val) > 1e-4f)
                     direct_light = visibility * rec.mat_ptr->scattering_pdf(cur_ray, rec, shadow_ray) / pdf_val;
-                cur_emitted += srec.attenuation * direct_light * cur_albedo * emitted;
-
+                cur_emitted += glm::min(srec.attenuation * direct_light * cur_albedo * emitted, 1.0f);
+                
                 // Sample indirect light
                 scattered = ray(rec.p, srec.pdf_obj.generate(local_rand_state, emitted), cur_ray.time());
                 pdf_val = srec.pdf_obj.value(scattered.direction());
                 float indirect_light = 0.0f;
-                if (glm::abs(pdf_val) > 1e-4f)
+                if (glm::abs(pdf_val) > 1e-5f)
                     indirect_light = rec.mat_ptr->scattering_pdf(cur_ray, rec, scattered) / pdf_val;
-
-                // mixture_pdf mixed_pdf(&srec.pdf_obj, &light_pdf);
-                // scattered = ray(rec.p, mixed_pdf.generate(local_rand_state), cur_ray.time());
-                // pdf_val = mixed_pdf.value(scattered.direction());
-
-                //cur_albedo *= srec.attenuation *
-                //    rec.mat_ptr->scattering_pdf(cur_ray, rec, scattered) / pdf_val;
-
+                 
+                // Handle perpendicular grazing angles
+                if (glm::abs(indirect_light - 1.0f) > 1e-5) {
+                    //printf("%f %f\n", indirect_light, pdf_val);
+                    return cur_emitted;
+                }
+               
                 // Recursive call should be: 
                 // return srec.attenuation * (direct_light * emitted_light + indirect_light * get_color(scattered, ... ))
-                cur_albedo *= srec.attenuation * indirect_light;
+                cur_albedo *=  srec.attenuation * indirect_light;
+
+                // Update current ray for next iteration
                 cur_ray = scattered;
             }
             else {
@@ -152,29 +129,9 @@ __device__ glm::vec3 get_first_bounce_data(const ray& r, const color& background
         normal = rec.normal;
         position = rec.p;
 
+        // If we hit an emissive material (aka a light) with the first bounce we explicitly add the emission
         emitted = rec.mat_ptr->emitted(r, rec, rec.u, rec.v, rec.p);
         cur_emitted += emitted * cur_albedo;
-
-        // Spawn shadow ray
-        /*for (int j = 0; j < (*lights)->objects_size; j++) {
-            float u, v;
-            point3 light_pos = (*lights)->objects[j]->random_surface_point(local_rand_state, u, v);
-            auto dif = light_pos - rec.p;
-            float t_length = glm::length(dif);
-            auto shadow_ray_dir = glm::normalize(dif);
-
-            if (glm::dot(shadow_ray_dir, rec.normal) < 0) // Testing if light position is facing away from the hit surface
-                continue;
-
-            ray shadow_ray(rec.p, shadow_ray_dir, cur_ray.time());
-
-            if ((*world)->any_hit(shadow_ray, 0.001f, t_length - 0.01f, local_rand_state)) // Test for any intersection between point hit and light source
-                continue;
-
-            // If we made it this far it means surface receives direct lighting from the current light source
-            direct_lighting += (*lights)->objects[j]->get_material()->emitted(u, v, light_pos);
-        }
-        */
 
         if (rec.mat_ptr->scatter(cur_ray, rec, srec, local_rand_state)) {
             if (srec.is_specular) {
@@ -182,10 +139,6 @@ __device__ glm::vec3 get_first_bounce_data(const ray& r, const color& background
                 cur_ray = srec.specular_ray;
             }
             else {
-                // cosine_pdf p0(rec.normal);
-                // scattered = ray(rec.p, p.generate(local_rand_state), cur_ray.time());
-                // pdf_val = p.value(scattered.direction());
-
                 // Sample direct light
                 hittable_pdf light_pdf((*lights), rec.p);
                 auto dif = light_pdf.generate(local_rand_state, emitted);
@@ -204,33 +157,33 @@ __device__ glm::vec3 get_first_bounce_data(const ray& r, const color& background
                 float direct_light = 0.0f;
                 if (glm::abs(pdf_val) > 1e-4f)
                     direct_light = visibility * rec.mat_ptr->scattering_pdf(cur_ray, rec, shadow_ray) / pdf_val;
-                cur_emitted += srec.attenuation * direct_light * cur_albedo * emitted;
-
+                
+                cur_emitted += glm::min(srec.attenuation * direct_light * cur_albedo * emitted, 1.0f);
+                
                 // Sample indirect light
                 scattered = ray(rec.p, srec.pdf_obj.generate(local_rand_state, emitted), cur_ray.time());
                 pdf_val = srec.pdf_obj.value(scattered.direction());
                 float indirect_light = 0.0f;
-                if (glm::abs(pdf_val) > 1e-4f)
+                if (glm::abs(pdf_val) > 1e-5f)
                     indirect_light = rec.mat_ptr->scattering_pdf(cur_ray, rec, scattered) / pdf_val;
 
-                // mixture_pdf mixed_pdf(&srec.pdf_obj, &light_pdf);
-                // scattered = ray(rec.p, mixed_pdf.generate(local_rand_state), cur_ray.time());
-                // pdf_val = mixed_pdf.value(scattered.direction());
-
-                //cur_albedo *= srec.attenuation *
-                //    rec.mat_ptr->scattering_pdf(cur_ray, rec, scattered) / pdf_val;
+                // Handle perpendicular grazing angles
+                if (glm::abs(indirect_light - 1.0f) > 1e-5f) {
+                    //printf("first bounce: %f %f %f || %f %f %f || %f %f %f\n", rec.p.x, rec.p.y, rec.p.z, 
+                        //rec.normal.x, rec.normal.y, rec.normal.z, 
+                        //scattered.direction().x, scattered.direction().y, scattered.direction().z);
+                    return cur_emitted;
+                }
 
                 // Recursive call should be: 
                 // return srec.attenuation * (direct_light * emitted_light + indirect_light * get_color(scattered, ... ))
                 cur_albedo *= srec.attenuation * indirect_light;
                 cur_ray = scattered;
             }
-        }
-        else {
+        } else {
             return cur_emitted;
         }
-    }
-    else {
+    } else {
         // No bounce special case, normals and position is undefined
         normal = glm::vec3(0.5f);// glm::vec3(0, 0, 1);//glm::vec3(0.0f); // can also use normalized value like (0, 0, 1) if we get an error
         position = cur_ray.at(10000.0f);//point3(0.0f);  // If it doesn't work also try ray.at(large_value);
@@ -240,10 +193,19 @@ __device__ glm::vec3 get_first_bounce_data(const ray& r, const color& background
 
     for (int i = 1; i < depth; i++) {
         if ((*world)->hit(cur_ray, 0.001f, infinity, rec, local_rand_state)) {
+
+            // Specular materials do not sample lights directly
+            if (srec.is_specular) {
+                emitted = rec.mat_ptr->emitted(r, rec, rec.u, rec.v, rec.p);
+                cur_emitted += emitted * cur_albedo;
+            }
+
             if (rec.mat_ptr->scatter(cur_ray, rec, srec, local_rand_state)) {
-                // cosine_pdf p0(rec.normal);
-                // scattered = ray(rec.p, p.generate(local_rand_state), cur_ray.time());
-                // pdf_val = p.value(scattered.direction());
+                if (srec.is_specular) {
+                    cur_albedo *= srec.attenuation;
+                    cur_ray = srec.specular_ray;
+                    continue;
+                }
 
                 // Sample direct light
                 hittable_pdf light_pdf((*lights), rec.p);
@@ -263,25 +225,26 @@ __device__ glm::vec3 get_first_bounce_data(const ray& r, const color& background
                 float direct_light = 0.0f;
                 if (glm::abs(pdf_val) > 1e-4f)
                     direct_light = visibility * rec.mat_ptr->scattering_pdf(cur_ray, rec, shadow_ray) / pdf_val;
-                cur_emitted += srec.attenuation * direct_light * cur_albedo * emitted;
-
+                cur_emitted += glm::min(srec.attenuation * direct_light * cur_albedo * emitted, 1.0f);
+                
                 // Sample indirect light
                 scattered = ray(rec.p, srec.pdf_obj.generate(local_rand_state, emitted), cur_ray.time());
                 pdf_val = srec.pdf_obj.value(scattered.direction());
                 float indirect_light = 0.0f;
-                if (glm::abs(pdf_val) > 1e-4f)
+                if (glm::abs(pdf_val) > 1e-5f)
                     indirect_light = rec.mat_ptr->scattering_pdf(cur_ray, rec, scattered) / pdf_val;
-
-                // mixture_pdf mixed_pdf(&srec.pdf_obj, &light_pdf);
-                // scattered = ray(rec.p, mixed_pdf.generate(local_rand_state), cur_ray.time());
-                // pdf_val = mixed_pdf.value(scattered.direction());
-
-                //cur_albedo *= srec.attenuation *
-                //    rec.mat_ptr->scattering_pdf(cur_ray, rec, scattered) / pdf_val;
-
+                 
+                // Handle perpendicular grazing angles
+                if (glm::abs(indirect_light - 1.0f) > 1e-5) {
+                    //printf("%f %f\n", indirect_light, pdf_val);
+                    return cur_emitted;
+                }
+               
                 // Recursive call should be: 
                 // return srec.attenuation * (direct_light * emitted_light + indirect_light * get_color(scattered, ... ))
-                cur_albedo *= srec.attenuation * indirect_light;
+                cur_albedo *=  srec.attenuation * indirect_light;
+
+                // Update current ray for next iteration
                 cur_ray = scattered;
             }
             else {
@@ -390,13 +353,15 @@ __global__ void create_world(hittable** d_list, int objects_size, hittable_list*
         //box1 = new constant_medium(box1, 0.01f, color(0.0f));
         d_list[6] = box1;
 
-        hittable* box2 = new box(point3(0, 0, 0), point3(165, 165, 165), white);
-        box2 = new rotate_y(box2, -18.0f);
-        box2 = new translate(box2, glm::vec3(130, 0, 65));
+        //hittable* box2 = new box(point3(0, 0, 0), point3(165, 165, 165), white);
+        //box2 = new rotate_y(box2, -18.0f);
+        //box2 = new translate(box2, glm::vec3(130, 0, 65));
          //box2 = new constant_medium(box2, 0.01f, color(1.0f));
-         d_list[7] = box2;
-        //auto glass = new dielectric(1.5f);
-        //d_list[7] = new sphere(point3(190, 90, 190), 90.0f, glass);
+         //d_list[7] = box2;
+        auto glass = new dielectric(1.5f);
+        //auto purple_aluminum = new metal(color(0.8f, 0.15f, 0.88f), 0.1f);
+        d_list[7] = new sphere(point3(190, 90, 190), 90.0f, glass);
+        // d_list[7] = new sphere(point3(200, 100, 200), 100.0f, purple_aluminum);
         // lights_list[1] = d_list[7];
 
 
@@ -516,33 +481,28 @@ __global__ void render(color* fb, color* pbo_buf, glm::vec3* normals, point3* po
     float u = float(i + curand_uniform(&local_rand_state)) / max_x;
     float v = float(j + curand_uniform(&local_rand_state)) / max_y;
     ray r = (*cam)->get_ray(u, v, &local_rand_state);
-    col += get_first_bounce_data(r, bgcolor, world, lights, max_depth, 
-        normals[pixel_index], positions[pixel_index], &local_rand_state);
+    //col += get_first_bounce_data(r, bgcolor, world, lights, max_depth, 
+    //    normals[pixel_index], positions[pixel_index], &local_rand_state);
 
-    for (int s = 1; s < spp; s++) {
+    for (int s = 0; s < spp; s++) {
         u = float(i + curand_uniform(&local_rand_state)) / max_x;
         v = float(j + curand_uniform(&local_rand_state)) / max_y;
         ray r = (*cam)->get_ray(u, v, &local_rand_state);
         col += get_color(r, bgcolor, world, lights, max_depth, &local_rand_state);
     }
 
+
+    /*
+    // Check for NaNs
     if (glm::any(glm::isnan(col))) {
         printf("nan detected\n");
     }
-    // Check for NaNs
     if (col.r != col.r) col.r = 0.0f;
     if (col.g != col.g) col.g = 0.0f;
     if (col.b != col.b) col.b = 0.0f;
-
-    /*
-    if (col.r > 10000.0f)
-        printf("red %d %d\n", i, j);
-    if (col.g > 10000.0f)
-        printf("green %d %d\n", i, j);
-    if (col.b > 10000.0f)
-        printf("blue %d %d\n", i, j);
     */
-    
+
+    //col = glm::clamp(col, 0.0f, 1.0f);
 
     if (frame_count > 1) {
         fb[pixel_index] += col;
